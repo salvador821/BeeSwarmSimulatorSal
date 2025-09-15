@@ -1,15 +1,16 @@
--- Ultimate NPC System with Orion GUI
+-- Complete NPC System with Orion GUI
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
-
--- Load Orion Library
-local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Orion/main/source"))()
+local UserInputService = game:GetService("UserInputService")
 
 -- Get local player
 local localPlayer = Players.LocalPlayer
+
+-- Load Orion Library
+local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Orion/main/source"))()
 
 -- Create NPC system
 local NPCSystem = {
@@ -22,8 +23,19 @@ local NPCSystem = {
     NPCs = {},
     XPItems = {},
     UpgradePriority = {"DamageUpgrade", "ExpUpgrade", "DodgeUpgrade", "CritChanceUpgrade", "Acid", "Can", "Pin", "MagnetUpgrade", "ReviveUpgrade", "Cashupgrade"},
-    UpgradeRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("LevelUp")
 }
+
+-- Try to get the upgrade remote safely
+local upgradeRemote
+pcall(function()
+    upgradeRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("LevelUp")
+end)
+
+if not upgradeRemote then
+    warn("Upgrade remote not found! Auto-upgrade will not work.")
+end
+
+NPCSystem.UpgradeRemote = upgradeRemote
 
 -- Create Orion UI
 local Window = OrionLib:MakeWindow({
@@ -34,33 +46,6 @@ local Window = OrionLib:MakeWindow({
     IntroEnabled = true,
     IntroText = "NPC Control System"
 })
-
--- Load saved settings
-local function loadSettings()
-    local success, savedData = pcall(function()
-        return HttpService:JSONDecode(plugin:GetSetting("NPCSystemSettings") or "{}")
-    end)
-    
-    if success and savedData then
-        NPCSystem.UpgradePriority = savedData.UpgradePriority or NPCSystem.UpgradePriority
-        NPCSystem.AutoUpgradeEnabled = savedData.AutoUpgradeEnabled ~= nil and savedData.AutoUpgradeEnabled or true
-    end
-end
-
--- Save settings
-local function saveSettings()
-    local dataToSave = {
-        UpgradePriority = NPCSystem.UpgradePriority,
-        AutoUpgradeEnabled = NPCSystem.AutoUpgradeEnabled
-    }
-    
-    pcall(function()
-        plugin:SetSetting("NPCSystemSettings", HttpService:JSONEncode(dataToSave))
-    end)
-end
-
--- Load settings on start
-loadSettings()
 
 -- Create tabs
 local MainTab = Window:MakeTab({
@@ -81,8 +66,15 @@ local BossTab = Window:MakeTab({
     PremiumOnly = false
 })
 
+-- Initialize settings
+NPCSystem.XPCollection = true
+NPCSystem.BossHandling = true
+NPCSystem.TeleportAboveBosses = true
+NPCSystem.BossTeleportHeight = 25
+NPCSystem.FocusBossesFirst = true
+
 -- Main controls
-MainTab:AddToggle({
+local avoidanceToggle = MainTab:AddToggle({
     Name = "NPC Avoidance",
     Default = NPCSystem.Enabled,
     Callback = function(Value)
@@ -98,25 +90,22 @@ MainTab:AddToggle({
                 end
             end
         end
-        saveSettings()
     end
 })
 
 MainTab:AddToggle({
     Name = "XP Collection",
-    Default = true,
+    Default = NPCSystem.XPCollection,
     Callback = function(Value)
         NPCSystem.XPCollection = Value
-        saveSettings()
     end
 })
 
 MainTab:AddToggle({
     Name = "Boss Handling",
-    Default = true,
+    Default = NPCSystem.BossHandling,
     Callback = function(Value)
         NPCSystem.BossHandling = Value
-        saveSettings()
     end
 })
 
@@ -148,12 +137,11 @@ MainTab:AddButton({
 })
 
 -- Upgrade settings
-UpgradeTab:AddToggle({
+local upgradeToggle = UpgradeTab:AddToggle({
     Name = "Auto-Upgrade",
     Default = NPCSystem.AutoUpgradeEnabled,
     Callback = function(Value)
         NPCSystem.AutoUpgradeEnabled = Value
-        saveSettings()
     end
 })
 
@@ -170,7 +158,6 @@ UpgradeTab:AddDropdown({
                 break
             end
         end
-        saveSettings()
     end
 })
 
@@ -194,10 +181,9 @@ end
 -- Boss settings
 BossTab:AddToggle({
     Name = "Teleport Above Bosses",
-    Default = true,
+    Default = NPCSystem.TeleportAboveBosses,
     Callback = function(Value)
         NPCSystem.TeleportAboveBosses = Value
-        saveSettings()
     end
 })
 
@@ -205,31 +191,22 @@ BossTab:AddSlider({
     Name = "Boss Teleport Height",
     Min = 10,
     Max = 50,
-    Default = 25,
+    Default = NPCSystem.BossTeleportHeight,
     Color = Color3.fromRGB(255, 255, 255),
     Increment = 1,
     ValueName = "studs",
     Callback = function(Value)
         NPCSystem.BossTeleportHeight = Value
-        saveSettings()
     end
 })
 
 BossTab:AddToggle({
     Name = "Focus Bosses First",
-    Default = true,
+    Default = NPCSystem.FocusBossesFirst,
     Callback = function(Value)
         NPCSystem.FocusBossesFirst = Value
-        saveSettings()
     end
 })
-
--- Initialize settings
-NPCSystem.XPCollection = true
-NPCSystem.BossHandling = true
-NPCSystem.TeleportAboveBosses = true
-NPCSystem.BossTeleportHeight = 25
-NPCSystem.FocusBossesFirst = true
 
 -- Find nearby XP items
 function NPCSystem:FindNearbyXP(npc)
@@ -338,7 +315,7 @@ function NPCSystem:CalculateEscapePath(npc, enemies)
         escapeVector = escapeVector.Unit
     end
     
-    -- Use pathfinding to find a valid path away from enemies [citation:1][citation:2]
+    -- Use pathfinding to find a valid path away from enemies 
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
         AgentHeight = 5,
@@ -347,7 +324,7 @@ function NPCSystem:CalculateEscapePath(npc, enemies)
     
     local targetPosition = npcPosition + (escapeVector * 25)
     
-    -- Find a safe position using multiple raycasts in different directions [citation:4]
+    -- Find a safe position using multiple raycasts in different directions 
     local bestDirection = escapeVector
     local bestDistance = 25
     
@@ -418,7 +395,7 @@ function NPCSystem:CalculatePathToXP(npc, xpItem)
     local npcPosition = npc.HumanoidRootPart.Position
     local targetPosition = xpItem.position
     
-    -- Use pathfinding to find a valid path to XP [citation:1]
+    -- Use pathfinding to find a valid path to XP 
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
         AgentHeight = 5,
@@ -460,7 +437,7 @@ function NPCSystem:CheckHealthAndReact(npc)
             local escapeDirection = (npc.HumanoidRootPart.Position - target.position).Unit
             local teleportPosition = target.position + (escapeDirection * 5)
             
-            -- Avoid obstacles when teleporting [citation:4]
+            -- Avoid obstacles when teleporting 
             local raycastParams = RaycastParams.new()
             raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
             raycastParams.FilterDescendantsInstances = {npc}
@@ -480,7 +457,7 @@ end
 
 -- Auto-upgrade function
 function NPCSystem:AttemptUpgrade()
-    if not self.AutoUpgradeEnabled then return end
+    if not self.AutoUpgradeEnabled or not self.UpgradeRemote then return end
     
     for _, upgrade in ipairs(self.UpgradePriority) do
         local args = {upgrade}
@@ -550,7 +527,7 @@ function NPCSystem:Wander(npc)
     local randomDirection = Vector3.new(math.random(-1, 1), 0, math.random(-1, 1)).Unit
     local targetPosition = npcPosition + (randomDirection * math.random(15, 30))
     
-    -- Use pathfinding for wandering too [citation:1]
+    -- Use pathfinding for wandering too 
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
         AgentHeight = 5,
@@ -613,4 +590,17 @@ function NPCSystem:MakeDecision(npc)
         return
     end
     
-    
+    -- Priority 3: Collect XP
+    if NPCSystem.XPCollection then
+        local xpItems = self:FindNearbyXP(npc)
+        if #xpItems > 0 then
+            local waypoints, direction = self:CalculatePathToXP(npc, xpItems[1])
+            
+            if waypoints then
+                self:FollowPath(npc, waypoints)
+            elseif direction then
+                npc.Humanoid.WalkSpeed = 16
+                npc.Humanoid:MoveTo(xpItems[1].position)
+                
+                local startTime = tick()
+                while (npc.HumanoidRootPart.Position - xpItems[1].position).Magnitude > 3 and tick()
