@@ -4,13 +4,12 @@ local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
-local UserInputService = game:GetService("UserInputService")
 
 -- Get local player
 local localPlayer = Players.LocalPlayer
 
 -- Load Orion Library
-local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Orion/main/source"))()
+local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/shlexware/Orion/main/source')))()
 
 -- Create NPC system
 local NPCSystem = {
@@ -74,9 +73,10 @@ NPCSystem.BossTeleportHeight = 25
 NPCSystem.FocusBossesFirst = true
 
 -- Main controls
-local avoidanceToggle = MainTab:AddToggle({
+MainTab:AddToggle({
     Name = "NPC Avoidance",
     Default = NPCSystem.Enabled,
+    Flag = "AvoidanceToggle",
     Callback = function(Value)
         NPCSystem.Enabled = Value
         if not Value then
@@ -96,6 +96,7 @@ local avoidanceToggle = MainTab:AddToggle({
 MainTab:AddToggle({
     Name = "XP Collection",
     Default = NPCSystem.XPCollection,
+    Flag = "XPToggle",
     Callback = function(Value)
         NPCSystem.XPCollection = Value
     end
@@ -104,6 +105,7 @@ MainTab:AddToggle({
 MainTab:AddToggle({
     Name = "Boss Handling",
     Default = NPCSystem.BossHandling,
+    Flag = "BossToggle",
     Callback = function(Value)
         NPCSystem.BossHandling = Value
     end
@@ -137,18 +139,21 @@ MainTab:AddButton({
 })
 
 -- Upgrade settings
-local upgradeToggle = UpgradeTab:AddToggle({
+UpgradeTab:AddToggle({
     Name = "Auto-Upgrade",
     Default = NPCSystem.AutoUpgradeEnabled,
+    Flag = "UpgradeToggle",
     Callback = function(Value)
         NPCSystem.AutoUpgradeEnabled = Value
     end
 })
 
-UpgradeTab:AddDropdown({
+-- Create dropdown for upgrade priority
+local priorityDropdown = UpgradeTab:AddDropdown({
     Name = "Upgrade Priority",
     Default = NPCSystem.UpgradePriority[1],
     Options = NPCSystem.UpgradePriority,
+    Flag = "PriorityDropdown",
     Callback = function(Value)
         -- Move the selected upgrade to the top of the priority list
         for i, upgrade in ipairs(NPCSystem.UpgradePriority) do
@@ -158,6 +163,8 @@ UpgradeTab:AddDropdown({
                 break
             end
         end
+        -- Refresh dropdown to show new order
+        priorityDropdown:Refresh(NPCSystem.UpgradePriority, false)
     end
 })
 
@@ -173,7 +180,7 @@ UpgradeTab:AddButton({
     end
 })
 
-UpgradeTab:AddLabel("Upgrade Priority Order")
+UpgradeTab:AddLabel("Current Upgrade Priority:")
 for i, upgrade in ipairs(NPCSystem.UpgradePriority) do
     UpgradeTab:AddLabel(i .. ". " .. upgrade)
 end
@@ -182,6 +189,7 @@ end
 BossTab:AddToggle({
     Name = "Teleport Above Bosses",
     Default = NPCSystem.TeleportAboveBosses,
+    Flag = "TeleportToggle",
     Callback = function(Value)
         NPCSystem.TeleportAboveBosses = Value
     end
@@ -195,6 +203,7 @@ BossTab:AddSlider({
     Color = Color3.fromRGB(255, 255, 255),
     Increment = 1,
     ValueName = "studs",
+    Flag = "BossHeightSlider",
     Callback = function(Value)
         NPCSystem.BossTeleportHeight = Value
     end
@@ -203,6 +212,7 @@ BossTab:AddSlider({
 BossTab:AddToggle({
     Name = "Focus Bosses First",
     Default = NPCSystem.FocusBossesFirst,
+    Flag = "FocusBossToggle",
     Callback = function(Value)
         NPCSystem.FocusBossesFirst = Value
     end
@@ -597,10 +607,4 @@ function NPCSystem:MakeDecision(npc)
             local waypoints, direction = self:CalculatePathToXP(npc, xpItems[1])
             
             if waypoints then
-                self:FollowPath(npc, waypoints)
-            elseif direction then
-                npc.Humanoid.WalkSpeed = 16
-                npc.Humanoid:MoveTo(xpItems[1].position)
-                
-                local startTime = tick()
-                while (npc.HumanoidRootPart.Position - xpItems[1].position).Magnitude > 3 and tick()
+                self:FollowPath(npc, w
