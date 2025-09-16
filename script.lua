@@ -15,10 +15,10 @@ local AutoFarm = {
     AvoidEnemies = true,
     AttackBosses = true,
     BossTeleportHeight = 25,
-    SAFE_DISTANCE = 10,
-    DETECTION_RANGE = 30,
+    SAFE_DISTANCE = 15,
+    DETECTION_RANGE = 35,
     NPCs = {},
-    Priority = {"DamageUpgrade", "ExpUpgrade", "DodgeUpgrade", "CritChanceUpgrade"},
+    UpgradeList = {"DamageUpgrade", "ExpUpgrade", "DodgeUpgrade", "CritChanceUpgrade", "Acid", "Can", "Pin", "MagnetUpgrade", "ReviveUpgrade", "Cashupgrade"},
     CurrentTarget = nil
 }
 
@@ -98,25 +98,6 @@ MainTab:CreateSlider({
    end,
 })
 
--- Priority System Tab
-local PriorityTab = Window:CreateTab("Priority", 4483361688)
-
--- Priority Dropdown
-PriorityTab:CreateDropdown({
-   Name = "Set Priority Target",
-   Options = {"DamageUpgrade", "ExpUpgrade", "DodgeUpgrade", "CritChanceUpgrade", "Acid", "Can", "Pin"},
-   CurrentOption = "DamageUpgrade",
-   Callback = function(Option)
-      table.insert(AutoFarm.Priority, 1, Option)
-      Rayfield:Notify({
-         Title = "Priority Set",
-         Content = Option .. " is now top priority",
-         Duration = 3,
-         Image = 4483361688
-      })
-   end,
-})
-
 -- Refresh NPCs Button
 MainTab:CreateButton({
    Name = "Refresh NPCs",
@@ -140,12 +121,6 @@ MainTab:CreateButton({
       })
    end,
 })
-
--- Show current priority
-PriorityTab:CreateLabel("Current Priority Order:")
-for i, priority in ipairs(AutoFarm.Priority) do
-   PriorityTab:CreateLabel(i .. ". " .. priority)
-end
 
 -- Function to find nearby enemies
 function AutoFarm:FindNearbyEnemies(npc)
@@ -202,59 +177,85 @@ function AutoFarm:FindNearbyEnemies(npc)
     
     return enemies, bosses
 end
-
--- Function to find priority targets
-function AutoFarm:FindPriorityTargets(npc)
+-- Function to find XP and items
+function AutoFarm:FindTargets(npc)
     local npcPosition = npc.HumanoidRootPart.Position
     local targets = {}
     
-    -- Look for priority items in workspace
+    -- Look for XP items
     for _, obj in pairs(workspace:GetDescendants()) do
-        for _, priority in ipairs(self.Priority) do
-            if obj.Name:lower():find(priority:lower()) and obj:IsA("BasePart") then
-                local distance = (obj.Position - npcPosition).Magnitude
-                if distance <= 50 then
-                    table.insert(targets, {
-                        object = obj,
-                        position = obj.Position,
-                        distance = distance,
-                        priority = priority
-                    })
-                end
+        if (obj.Name:lower():find("experience") or obj.Name:lower():find("xp")) and obj:IsA("BasePart") then
+            local distance = (obj.Position - npcPosition).Magnitude
+            if distance <= 50 then
+                table.insert(targets, {
+                    object = obj,
+                    position = obj.Position,
+                    distance = distance,
+                    type = "xp"
+                })
             end
         end
     end
     
-    -- Sort by priority and distance
-    table.sort(targets, function(a, b)
-        local aIndex = table.find(self.Priority, a.priority) or 99
-        local bIndex = table.find(self.Priority, b.priority) or 99
-        if aIndex == bIndex then
-            return a.distance < b.distance
+    -- Look for coins or collectibles
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if (obj.Name:lower():find("coin") or obj.Name:lower():find("money") or obj.Name:lower():find("collect")) and obj:IsA("BasePart") then
+            local distance = (obj.Position - npcPosition).Magnitude
+            if distance <= 50 then
+                table.insert(targets, {
+                    object = obj,
+                    position = obj.Position,
+                    distance = distance,
+                    type = "coin"
+                })
+            end
         end
-        return aIndex < bIndex
-    end)
+    end
+    
+    -- Sort by distance
+    table.sort(targets, function(a, b) return a.distance < b.distance end)
     
     return targets
 end
--- Function to calculate escape path
+
+-- Function to calculate escape path (IMPROVED)
 function AutoFarm:CalculateEscapePath(npc, enemies)
     if #enemies == 0 then return nil end
     
     local npcPosition = npc.HumanoidRootPart.Position
     local escapeVector = Vector3.new(0, 0, 0)
+    local closestEnemy = enemies[1]
     
-    for _, enemy in ipairs(enemies) do
-        local direction = (npcPosition - enemy.position).Unit
-        local weight = 2 / (enemy.distance + 0.1)
-        escapeVector = escapeVector + (direction * weight)
+    -- Calculate direction away from closest enemy
+    local awayFromEnemy = (npcPosition - closestEnemy.position).Unit
+    
+    -- Add some randomness to avoid predictable patterns
+    local randomAngle = math.random(-45, 45)
+    local randomDirection = CFrame.fromEulerAnglesXYZ(0, math.rad(randomAngle), 0) * awayFromEnemy
+    
+    -- Use pathfinding to find a safe path
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true
+    })
+    
+    local targetPosition = npcPosition + (randomDirection * 25)
+    
+    -- Try to compute path
+    local success, errorMessage = pcall(function()
+        path:ComputeAsync(npcPosition, targetPosition)
+    end)
+    
+    if success and path.Status == Enum.PathStatus.Success then
+        local waypoints = path:GetWaypoints()
+        if #waypoints > 1 then
+            return waypoints[2].Position -- Return the first waypoint position
+        end
     end
     
-    if escapeVector.Magnitude > 0 then
-        escapeVector = escapeVector.Unit
-    end
-    
-    return escapeVector
+    -- Fallback: move directly away from enemy
+    return npcPosition + (awayFromEnemy * 20)
 end
 
 -- Function to handle boss enemies
@@ -274,13 +275,32 @@ function AutoFarm:MoveToTarget(npc, targetPosition)
     local startTime = tick()
     while (npc.HumanoidRootPart.Position - targetPosition).Magnitude > 5 and tick() - startTime < 8 do
         if not AutoFarm.Enabled then return false end
+        
+        -- Check if we need to escape enemies during movement
+        local enemies, bosses = AutoFarm:FindNearbyEnemies(npc)
+        if AutoFarm.AvoidEnemies and #enemies > 0 and enemies[1].distance < AutoFarm.SAFE_DISTANCE then
+            return false -- Interrupt movement to escape
+        end
+        
         RunService.Heartbeat:Wait()
     end
     
     return true
 end
 
--- Main decision function
+-- Auto-upgrade function (FIXED)
+function AutoFarm:AttemptUpgrade()
+    for _, upgrade in ipairs(self.UpgradeList) do
+        local args = {upgrade}
+        pcall(function()
+            local remote = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("LevelUp")
+            remote:FireServer(unpack(args))
+        end)
+        wait(0.2) -- Small delay between upgrades
+    end
+end
+
+-- Main decision function (IMPROVED)
 function AutoFarm:MakeDecision(npc)
     if not self.Enabled or not npc or not npc.Parent or npc.Humanoid.Health <= 0 then return end
     
@@ -294,40 +314,35 @@ function AutoFarm:MakeDecision(npc)
         end
     end
     
-    -- Avoid enemies if enabled and they're too close
+    -- AVOID ENEMIES (IMPROVED) - Run away if enemies are close
     if self.AvoidEnemies and #enemies > 0 and enemies[1].distance < self.SAFE_DISTANCE then
-        local escapeVector = self:CalculateEscapePath(npc, enemies)
-        if escapeVector then
-            local escapePosition = npc.HumanoidRootPart.Position + (escapeVector * 20)
+        local escapePosition = self:CalculateEscapePath(npc, enemies)
+        if escapePosition then
             self:MoveToTarget(npc, escapePosition)
             return
         end
     end
     
-    -- Find and move to priority targets
-    local priorityTargets = self:FindPriorityTargets(npc)
-    if #priorityTargets > 0 then
-        self:MoveToTarget(npc, priorityTargets[1].position)
+    -- Find and move to targets (XP, coins, etc)
+    local targets = self:FindTargets(npc)
+    if #targets > 0 then
+        self:MoveToTarget(npc, targets[1].position)
         return
     end
     
-    -- Wander randomly if no targets found
-    local randomDirection = Vector3.new(math.random(-1, 1), 0, math.random(-1, 1)).Unit
-    local wanderPosition = npc.HumanoidRootPart.Position + (randomDirection * 15)
+    -- Wander randomly if no targets found (away from enemies)
+    local randomDirection
+    if #enemies > 0 then
+        -- Wander away from enemies
+        randomDirection = (npc.HumanoidRootPart.Position - enemies[1].position).Unit
+    else
+        -- Random wander
+        randomDirection = Vector3.new(math.random(-1, 1), 0, math.random(-1, 1)).Unit
+    end
+    
+    local wanderPosition = npc.HumanoidRootPart.Position + (randomDirection * 20)
     self:MoveToTarget(npc, wanderPosition)
 end
-
--- Auto-upgrade function
-function AutoFarm:AttemptUpgrade()
-    for _, upgrade in ipairs(self.Priority) do
-        local args = {upgrade}
-        pcall(function()
-            game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("LevelUp"):FireServer(unpack(args))
-        end)
-        wait(0.5)
-    end
-end
-
 -- Initialize NPCs
 function AutoFarm:InitNPCs()
     for _, npc in pairs(workspace:GetChildren()) do
@@ -356,24 +371,31 @@ end
 
 -- Main loop
 local lastUpgradeTime = 0
+local lastProcessTime = 0
+
 RunService.Heartbeat:Connect(function()
     if not AutoFarm.Enabled then return end
     
-    -- Attempt upgrades every 10 seconds
-    if tick() - lastUpgradeTime > 10 then
+    -- Attempt upgrades every 3 seconds
+    if tick() - lastUpgradeTime > 3 then
         lastUpgradeTime = tick()
         AutoFarm:AttemptUpgrade()
     end
     
-    -- Process each NPC
-    for npc, data in pairs(AutoFarm.NPCs) do
-        if npc and npc.Parent and npc:FindFirstChild("Humanoid") and npc:FindFirstChild("HumanoidRootPart") then
-            if tick() - data.lastDecisionTime > 1 then
-                data.lastDecisionTime = tick()
-                AutoFarm:MakeDecision(npc)
+    -- Process NPCs at a controlled rate (every 0.5 seconds)
+    if tick() - lastProcessTime > 0.5 then
+        lastProcessTime = tick()
+        
+        -- Process each NPC
+        for npc, data in pairs(AutoFarm.NPCs) do
+            if npc and npc.Parent and npc:FindFirstChild("Humanoid") and npc:FindFirstChild("HumanoidRootPart") then
+                if tick() - data.lastDecisionTime > 1 then
+                    data.lastDecisionTime = tick()
+                    AutoFarm:MakeDecision(npc)
+                end
+            else
+                AutoFarm.NPCs[npc] = nil
             end
-        else
-            AutoFarm.NPCs[npc] = nil
         end
     end
 end)
@@ -390,3 +412,7 @@ Rayfield:Notify({
    Duration = 5,
    Image = 4483361688
 })
+
+print("AutoFarm System successfully loaded!")
+print("Upgrades will be purchased every 3 seconds")
+print("NPCs will avoid enemies effectively")
