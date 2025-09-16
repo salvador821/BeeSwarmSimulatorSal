@@ -1,14 +1,15 @@
--- Load Orion Library FIRST
-local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/shlexware/Orion/main/source')))()
-
--- Services
+-- Services First
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 
 -- Get local player
 local localPlayer = Players.LocalPlayer
+
+-- Load Orion Library
+local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/shlexware/Orion/main/source')))()
 
 -- Create NPC system
 local NPCSystem = {
@@ -307,7 +308,7 @@ function NPCSystem:CalculateEscapePath(npc, enemies)
     
     for _, enemy in pairs(enemies) do
         local direction = (npcPosition - enemy.position).Unit
-        local weight = 2 / (enemy.distance + 0.1)
+        local weight = 2 / (eney.distance + 0.1)
         escapeVector = escapeVector + (direction * weight)
         closestDistance = math.min(closestDistance, enemy.distance)
     end
