@@ -1,16 +1,16 @@
 -- LocalScript in StarterPlayerScripts
--- This script makes the player's character pathfind to a position ~7 studs from the nearest enemy (approaches if far, maintains if close),
--- face the enemy (like shift lock), dodge spells/attacks, auto-use all spells in Backpack, and auto-attack every 0.1s.
+-- This script makes the player's character pathfind to a position ~16 studs from the nearest enemy (approaches if far, maintains if close),
+-- face the enemy (like shift lock), dodge spells/attacks aggressively, auto-use all spells in Backpack, and auto-attack every 0.1s.
 -- Pathfinding: Computes every heartbeat for responsiveness, fallback to direct MoveTo for edges/drops/stuck situations.
--- Dodging: Detects moving projectiles and static line attacks; dodges perpendicular if close/aligned.
+-- Dodging: Made more aggressive - detects moving projectiles with loose threshold; for static/line attacks, dodges if within 20 studs regardless of alignment.
 -- Spells: Fires remote for all tools in Backpack simultaneously when targeting, with 1s cooldown (adjustable).
--- Auto-Attack: Fires specific attack remote every 0.1s when targeting.
+-- Auto-Attack: Fires specific attack remote every 0.1s when targeting, using animationIndex=2 and current tick().
 -- Assumptions:
 -- - Enemies are character models tagged with "Enemy" (use CollectionService to tag them).
 -- - Enemies have a Humanoid for health checking.
 -- - Attacks/Spells are parts with names matching "Attack" or "Spell", with Velocity, LinearVelocity, or BodyVelocity.
--- - For line attacks: Dodges if player is aligned and within 10 studs.
--- - Improved anti-stuck: If no movement progress, fallback to direct MoveTo more often.
+-- - Improved anti-stuck: If no movement progress, force direct MoveTo and jump.
+-- - Dodge fix: Increased range to 30 studs, loosened conditions, dodge 10 studs sideways, random direction.
 
 local Players = game:GetService("Players")
 local PathfindingService = game:GetService("PathfindingService")
@@ -61,32 +61,32 @@ local function findNearestEnemy()
     return nearest, minDist
 end
 
--- Function to compute target position ~7 studs from enemy
+-- Function to compute target position ~16 studs from enemy
 local function getTargetPosition(enemyRoot, currentDist)
     local directionToEnemy = (enemyRoot.Position - root.Position).Unit
     local directionFromEnemy = -directionToEnemy
 
-    if currentDist < 6 then
-        -- Too close: move away to ~8 studs
-        return enemyRoot.Position + directionFromEnemy * 8
-    elseif currentDist > 8 then
-        -- Too far: move to a point 7 studs from enemy along the line
-        return enemyRoot.Position + directionFromEnemy * 7
+    if currentDist < 14 then
+        -- Too close: move away to ~18 studs
+        return enemyRoot.Position + directionFromEnemy * 18
+    elseif currentDist > 18 then
+        -- Too far: move to a point 16 studs from enemy along the line
+        return enemyRoot.Position + directionFromEnemy * 16
     else
-        -- At ~7 studs: circle around
+        -- At ~16 studs: circle around
         local tangent = Vector3.new(directionToEnemy.Z, 0, -directionToEnemy.X).Unit  -- Perpendicular in XZ plane
         return root.Position + tangent * 2  -- Move sideways to circle
     end
 end
 
--- Function to check for incoming attacks/spells and dodge
+-- Function to check for incoming attacks/spells and dodge (aggressive fix)
 local function checkForSpellsAndDodge()
     local spells = CollectionService:GetTagged("Spell")
     for _, spell in ipairs(spells) do
         if spell:IsA("BasePart") then
             local spellPos = spell.Position
             local distToSpell = (root.Position - spellPos).Magnitude
-            if distToSpell < 30 then  -- Increased range for better detection
+            if distToSpell < 30 then  -- Increased range
                 -- Get velocity from various sources
                 local velocity = spell.Velocity
                 local linearVel = spell:FindFirstChildOfClass("LinearVelocity")
@@ -102,28 +102,23 @@ local function checkForSpellsAndDodge()
                 local isIncoming = false
                 
                 if velocity.Magnitude > 0 then
-                    -- Moving projectile
-                    if relativePos:Dot(velocity.Unit) > 0.5 then  -- Loosened threshold
+                    -- Moving projectile: loose threshold
+                    if relativePos:Dot(velocity.Unit) > 0 then
                         isIncoming = true
                     end
                 else
-                    -- Static/line attack: check if player is close and in line
-                    local spellSize = spell.Size
-                    local spellOrientation = spell.CFrame.LookVector
-                    if (spellSize.X > spellSize.Z * 2 or spellSize.Z > spellSize.X * 2 or spellSize.Y > spellSize.X * 2) then  -- Long in any dimension
-                        local dirToSpell = relativePos.Unit
-                        local proj = dirToSpell:Dot(spellOrientation)
-                        if math.abs(proj) > 0.7 and distToSpell < 15 then  -- Loosened alignment, increased distance
-                            isIncoming = true
-                        end
+                    -- Static/line attack: dodge if close, no alignment check for aggressiveness
+                    if distToSpell < 20 then
+                        isIncoming = true
                     end
                 end
                 
                 if isIncoming then
-                    -- Dodge sideways
+                    -- Dodge sideways, random left/right
                     local refVector = (velocity.Magnitude > 0 and velocity or relativePos)
-                    local perpDir = refVector:Cross(Vector3.new(0,1,0)).Unit
-                    local dodgePos = root.Position + perpDir * 7  -- Increased dodge distance
+                    local cross = refVector:Cross(Vector3.new(0,1,0)).Unit
+                    local perpDir = math.random() > 0.5 and cross or -cross
+                    local dodgePos = root.Position + perpDir * 10  -- Increased dodge distance
                     return dodgePos
                 end
             end
@@ -233,9 +228,9 @@ player.CharacterAdded:Connect(function(newChar)
     bodyGyro.Parent = root
 end)
 
--- Monitor for new attacks
+-- Monitor for new attacks (expanded matching)
 workspace.ChildAdded:Connect(function(child)
-    if child:IsA("BasePart") and (child.Name:match("Attack") or child.Name:match("Spell")) then
+    if child:IsA("BasePart") and (child.Name:match("Attack") or child.Name:match("Spell") or child.Name:match("Line") or child.Name:match("Projectile")) then
         CollectionService:AddTag(child, "Spell")
     end
 end)
